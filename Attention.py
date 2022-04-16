@@ -1,4 +1,5 @@
 from tqdm.autonotebook import tqdm
+import os,sys,humanize,psutil,GPUtil
 import time
 import math
 import random
@@ -24,6 +25,15 @@ from torch.utils.data import Dataset, DataLoader
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+########################################################################
+# Define mem_report function
+def mem_report():
+  print("CPU RAM Free: " + humanize.naturalsize( psutil.virtual_memory().available ))
+  
+  GPUs = GPUtil.getGPUs()
+  for i, gpu in enumerate(GPUs):
+    print('GPU {:d} ... Mem Free: {:.0f}MB / {:.0f}MB | Utilization {:3.0f}%'.format(i, gpu.memoryFree, gpu.memoryTotal, gpu.memoryUtil*100))
+########################################################################
 
 def visualize2DSoftmax(X, y, model):
     """Function to visualize the classification boundary of a learned model on a 2-D dataset
@@ -44,7 +54,7 @@ def visualize2DSoftmax(X, y, model):
 
     cs = plt.contourf(xv, yv, preds[:,0].reshape(20,20), levels=np.linspace(0,1,num=20), cmap=plt.cm.RdYlBu)
     sns.scatterplot(x=X[:,0], y=X[:,1], hue=y, style=y, ax=cs.ax)
-
+########################################################################
 def run_epoch(model, optimizer, data_loader, loss_func, device, results, score_funcs, prefix="", desc=None):
     """
     model -- the PyTorch model / "Module" to run for one epoch
@@ -99,7 +109,7 @@ def run_epoch(model, optimizer, data_loader, loss_func, device, results, score_f
         except:
             results[prefix + " " + name].append(float("NaN"))
     return end-start #time spent on epoch
-
+########################################################################
 def train_simple_network(model, loss_func, train_loader, test_loader=None, score_funcs=None, 
                          epochs=50, device="cpu", checkpoint_file=None, lr=0.001):
     """Train simple neural networks
@@ -154,7 +164,7 @@ def train_simple_network(model, loss_func, train_loader, test_loader=None, score
             }, checkpoint_file)
 
     return pd.DataFrame.from_dict(results)
-
+########################################################################
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -187,7 +197,7 @@ class DebugShape(nn.Module):
     def forward(self, input):
         print(input.shape)
         return input
-    
+########################################################################    
 def weight_reset(m):
     """
     Go through a PyTorch module m and reset all the weights to an initial random state
@@ -195,7 +205,7 @@ def weight_reset(m):
     if "reset_parameters" in dir(m):
         m.reset_parameters()
     return
-
+########################################################################
 def moveTo(obj, device):
     """
     obj: the python object to move to a device, or to move its contents to a device
@@ -216,7 +226,7 @@ def moveTo(obj, device):
         return to_ret
     else:
         return obj
-        
+########################################################################        
 def train_network(model, loss_func, train_loader, val_loader=None, test_loader=None,score_funcs=None, 
                          epochs=50, device="cpu", checkpoint_file=None, 
                          lr_schedule=None, optimizer=None, disable_tqdm=False
@@ -305,9 +315,8 @@ def train_network(model, loss_func, train_loader, val_loader=None, test_loader=N
         del optimizer
 
     return pd.DataFrame.from_dict(results)
-
+########################################################################
 ### RNN utility Classes 
-
 class LastTimeStep(nn.Module):
     """
     A class for extracting the hidden activations of the last time step following 
@@ -338,7 +347,7 @@ class LastTimeStep(nn.Module):
         last_step = last_step.permute(1, 0, 2)
         #Finally, flatten the last two dimensions into one
         return last_step.reshape(batch_size, -1)
-    
+########################################################################    
 class EmbeddingPackable(nn.Module):
     """
     The embedding layer in PyTorch does not support Packed Sequence objects. 
@@ -363,9 +372,8 @@ class EmbeddingPackable(nn.Module):
             return self.embd_layer(input)
 
 
-
+########################################################################
 ### Attention Mechanism Layers
-
 class ApplyAttention(nn.Module):
     """
     This helper module is used to apply the results of an attention mechanism toa set of inputs. 
@@ -394,7 +402,7 @@ class ApplyAttention(nn.Module):
     
         final_context = (states*weights).sum(dim=1) #(B, T, D) * (B, T, 1) -> (B, D)
         return final_context, weights
-
+########################################################################
 class AttentionAvg(nn.Module):
 
     def __init__(self, attnScore):
@@ -424,9 +432,8 @@ class AttentionAvg(nn.Module):
         
         return context.view(B, D) #Flatten this out to (B, D)
 
-
+########################################################################
 class AdditiveAttentionScore(nn.Module):
-
     def __init__(self, D):
         super(AdditiveAttentionScore, self).__init__()
         self.v = nn.Linear(D, 1)
@@ -445,9 +452,8 @@ class AdditiveAttentionScore(nn.Module):
         state_context_combined = torch.cat((states, context), dim=2) #(B, T, D) + (B, T, D)  -> (B, T, 2*D)
         scores = self.v(torch.tanh(self.w(state_context_combined)))
         return scores
-
+########################################################################
 class GeneralScore(nn.Module):
-
     def __init__(self, D):
         super(GeneralScore, self).__init__()
         self.w = nn.Bilinear(D, D, 1)
@@ -465,7 +471,7 @@ class GeneralScore(nn.Module):
         context = torch.stack([context for _ in range(T)], dim=1) #(B, D) -> (B, T, D)
         scores = self.w(states, context) #(B, T, D) -> (B, T, 1)
         return scores
-
+########################################################################
 class DotScore(nn.Module):
 
     def __init__(self, D):
@@ -483,7 +489,7 @@ class DotScore(nn.Module):
         
         scores = torch.bmm(states,context.unsqueeze(2)) / np.sqrt(D) #(B, T, D) -> (B, T, 1)
         return scores
-    
+########################################################################    
 def getMaskByFill(x, time_dimension=1, fill=0):
     """
     x: the original input with three or more dimensions, (B, ..., T, ...)
@@ -513,9 +519,8 @@ def getMaskByFill(x, time_dimension=1, fill=0):
         #so return a value of true. 
         mask = torch.sum((x != fill), dim=to_sum_over) > 0
     return mask
-
-class LanguageNameDataset(Dataset):
-    
+########################################################################
+class LanguageNameDataset(Dataset):    
     def __init__(self, lang_name_dict, vocabulary):
         self.label_names = [x for x in lang_name_dict.keys()]
         self.data = []
@@ -552,7 +557,7 @@ class LanguageNameDataset(Dataset):
         label_vec = torch.tensor([label], dtype=torch.long)
         
         return self.string2InputVec(name), label
-    
+########################################################################    
 def pad_and_pack(batch):
     #1, 2, & 3: organize the batch input lengths, inputs, and outputs as seperate lists
     input_tensors = []
@@ -582,8 +587,8 @@ def create_indices(n_vars, degree):
       idx.append(new_s[k])
   return idx
 
+########################################################################
 # The following function create all independent monomials of 'n_vars' number of variables in degree 'degree'.
-
 def monomials(x, degree):
   x_monomials = []
   for idx in create_indices(len(x), degree):
@@ -606,7 +611,7 @@ def monomials_alt(x, degree):
       x_monomials.append(x_prod)
     x_tensor[b, :] = torch.tensor(np.array(x_monomials)) 
   return x_tensor
-
+########################################################################
 def run_epoch_reg(model, optimizer, data_loader, loss_func, device, results, score_funcs, prefix="", desc=None):
     running_loss = []
     y_true = []
@@ -652,7 +657,7 @@ def run_epoch_reg(model, optimizer, data_loader, loss_func, device, results, sco
     return end-start #time spent on epoch
 
 # We modified the train_network function of the textbook by replacing the run_epoch function by run_epoch_reg defined above.
-
+########################################################################
 def train_network_reg(model, loss_func, train_loader, val_loader=None, test_loader=None,score_funcs=None, 
                          epochs=50, device="cpu", checkpoint_file=None, 
                          lr_schedule=None, optimizer=None, disable_tqdm=False
@@ -720,9 +725,8 @@ def train_network_reg(model, loss_func, train_loader, val_loader=None, test_load
                 }, checkpoint_file)
 
     return pd.DataFrame.from_dict(results)
-
+########################################################################
 # Defining arctan function as an activation function in a network:
-
 class atan(nn.Module):
   def __init__(self):
     super().__init__() 
@@ -762,7 +766,7 @@ def getLayer(in_size, out_size, activation='Sigmoid'):
         activation_dict[activation]
     )
 
-
+########################################################################
 class RNN_Dataset(Dataset):
     def __init__(self, dataset, n=379):
         self.dataset = dataset
@@ -816,7 +820,7 @@ class recurrent_model(nn.Module):
     y = x
     return y
 
-
+########################################################################
 # Constructing the combiner component of the architecture 
 class Combiner(nn.Module):
     
@@ -835,8 +839,8 @@ class Combiner(nn.Module):
         
         return torch.sum(r, dim=1) #sum over the T dimension, giving (B, D) final shape $\bar{\boldsymbol{x}}$
 
+########################################################################
 # Constructing the backbone component of the network
-
 def backboneNetwork(T, D, neurons, activation):
   activation_dict = {'Sigmoid':nn.Sigmoid(), 'Tanh':nn.Tanh(), 'ReLU':nn.ReLU(), 'atan':atan(), 'LeakyReLU':nn.LeakyReLU(0.1)}
   return nn.Sequential(
@@ -852,9 +856,8 @@ def backboneNetwork(T, D, neurons, activation):
     nn.Linear(2*neurons, 2*neurons), 
     activation_dict[activation], 
 )
-
+########################################################################
 # Constructing the score component of the network
-
 def attention_network(neurons, activation):
   activation_dict = {'Sigmoid':nn.Sigmoid(), 'Tanh':nn.Tanh(), 'ReLU':nn.ReLU(), 'atan':atan(), 'LeakyReLU':nn.LeakyReLU()}
   return nn.Sequential(
@@ -900,8 +903,7 @@ class attention_model(nn.Module):
     y = self.layers[-1](self.bns[-1](x))  
     return y
 
-# Defining the model
-
+########################################################################
 # Dot product score
 class DotScore(nn.Module):
     def __init__(self, H):
@@ -912,7 +914,7 @@ class DotScore(nn.Module):
         T = states.size(1)
         scores = torch.bmm(states, context.unsqueeze(2)) / np.sqrt(self.H) #(B, T, H) -> (B, T, 1)
         return scores
-
+########################################################################
 # General score 
 class GeneralScore(nn.Module):
 
@@ -925,9 +927,8 @@ class GeneralScore(nn.Module):
         context = torch.stack([context for _ in range(T)], dim=1) #(B, H) -> (B, T, H)
         scores = self.w(states, context) #(B, T, H) -> (B, T, 1)
         return scores
-
+########################################################################
 # Additive attention score
-
 class AdditiveAttentionScore(nn.Module):
 
     def __init__(self, H, activation='Tanh'):
@@ -944,8 +945,8 @@ class AdditiveAttentionScore(nn.Module):
         scores = self.v(self.activation_dict[self.activation](self.w(state_context_combined))) # (B, T, 2*H) -> (B, T, 1)
         return scores
 
+########################################################################    
 # A constructor to apply attention score in a simpler way
-
 class ApplyAttention(nn.Module):
 
     def __init__(self):
@@ -971,8 +972,8 @@ def getMaskByFill(x, time_dimension=1, fill=0):
         mask = torch.sum((x != fill), dim=to_sum_over) > 0
     return mask
 
+########################################################################
 # A constructor for the attention-based model with context vector
-
 class SmarterAttentionNet(nn.Module):
 
     def __init__(self, T_length, input_dim, num_neurons, output_dim, activation='LeakyReLU', att_active='Tanh', score_net=None):
@@ -1015,7 +1016,7 @@ class SmarterAttentionNet(nn.Module):
         final_context, _ = self.apply_attn(h, scores, mask=mask)
         y = self.prediction_net(final_context)
         return y
-
+########################################################################
 # Viewing the predictions for for a sample of test data:
 def graph_results_add_sig(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_pred_vs_truth'):
   sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
@@ -1035,7 +1036,7 @@ def graph_results_add_sig(device_num,f1='./csv_files_for_paper/',f2='./csv_files
   plt.show()
   return
 
-
+########################################################################
 def graph_results_add_sig_R(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sigR_pred_vs_truth'):
   sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
   sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
@@ -1056,7 +1057,7 @@ def graph_results_add_sig_R(device_num,f1='./csv_files_for_paper/',f2='./csv_fil
   plt.show()
   return
 
-
+########################################################################
 def graph_results_add_relu(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_relu_pred_vs_truth'):
 
   sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
@@ -1076,7 +1077,7 @@ def graph_results_add_relu(device_num,f1='./csv_files_for_paper/',f2='./csv_file
   plt.show()
   return
 
-
+########################################################################
 # Defining a constructor class which creates the correct tensor for the RNN type models. One can adjust (by choosing n) how to break the 
 # data into feature and target subsets.
 class RNN_Dataset(Dataset):
@@ -1097,7 +1098,7 @@ class RNN_Dataset(Dataset):
         x = x[idx, :, :]
         y = y[idx]
         return x, y
-
+########################################################################
 def graph_results_add_sig_apart(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_apart_pred_vs_truth'):
   sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
   sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
@@ -1115,7 +1116,7 @@ def graph_results_add_sig_apart(device_num,f1='./csv_files_for_paper/',f2='./csv
   plt.savefig(f2+n1+str(device_num)+'.png')            
   plt.show()
   return
-
+########################################################################
 def graph_results_add_relu_apart(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_apart_pred_vs_truth'):
 
   sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
@@ -1135,7 +1136,7 @@ def graph_results_add_relu_apart(device_num,f1='./csv_files_for_paper/',f2='./cs
   plt.show()
   return
 
-
+########################################################################
 # Viewing the predictions for for a sample of test data:
 def graph_linear_regression(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='linear_regression_pred_vs_truth'):
 
@@ -1154,7 +1155,7 @@ def graph_linear_regression(device_num,f1='./csv_files_for_paper/',f2='./csv_fil
   plt.savefig(f2+n1+str(device_num)+'.png')                    
   plt.show()
   return
-
+########################################################################
 class RegressionDataset(Dataset):
     def __init__(self, dataset, reg_degree=1):
         self.dataset = dataset
@@ -1167,6 +1168,7 @@ class RegressionDataset(Dataset):
         x, y = self.dataset.__getitem__(idx)
         x = torch.tensor(monomials(x, self.reg_degree))
         return x, y
+########################################################################    
 # Viewing the predictions for for a sample of test data:
 def graph_rf_regressor(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='RF_regression_pred_vs_truth'):
 
