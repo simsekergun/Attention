@@ -1,4 +1,4 @@
-# Attention
+# Additive Attention 
 
 - The notebook explains how we predict the quality factor of the microrign resonators at high frequencies based on those resonators' quality factors at the lower frequencies.
 - The prediction is achieved via additive attention mechanism. MSE = 0.0763, R^2 = 0.945332.
