@@ -110,9 +110,46 @@ def run_epoch(model, optimizer, data_loader, loss_func, device, results, score_f
             results[prefix + " " + name].append(float("NaN"))
     return end-start #time spent on epoch
 ########################################################################
+def run_epoch_reg2(model, optimizer, data_loader, loss_func, device, results, score_funcs,y_true,y_pred, prefix="", desc=None):
+    running_loss = []
+    y_true = []
+    y_pred = []
+    start = time.time()
+    for inputs, labels in tqdm(data_loader, desc=desc, leave=False):
+        #Move the batch to the device we are using. 
+
+        inputs = moveTo(inputs, device)
+        labels = moveTo(labels, device)
+        
+        y_hat = model(inputs) #this just computed f_Θ(x(i))
+
+        # Compute loss.
+        loss = loss_func(y_hat, labels)
+         
+        if model.training:
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+
+        #Now we are just grabbing some information we would like to have
+        running_loss.append(loss.item())
+
+        labels = labels.detach().cpu().numpy()
+        y_hat = y_hat.detach().cpu().numpy()        
+        y_true.extend(labels.tolist())
+        y_pred.extend(y_hat.tolist())
+
+    #end training epoch
+    end = time.time()
+    plt.figure(1)
+    plt.scatter(np.asarray(y_true),np.asarray(y_pred))
+    
+    y_pred = np.asarray(y_pred)
+    return y_pred, y_true
+########################################################################
 def train_simple_network(model, loss_func, train_loader, test_loader=None, score_funcs=None, 
                          epochs=50, device="cpu", checkpoint_file=None, lr=0.001):
-    """Train simple neural networks
+    """Train simple neural network
     
     Keyword arguments:
     model -- the PyTorch model / "Module" to train
@@ -766,24 +803,6 @@ def getLayer(in_size, out_size, activation='Sigmoid'):
         activation_dict[activation]
     )
 
-########################################################################
-class RNN_Dataset(Dataset):
-    def __init__(self, dataset, n=379):
-        self.dataset = dataset
-        self.n = n
-
-    def __len__(self):
-        return self.dataset.shape[0]
-
-    def __getitem__(self, idx):
-        x = self.dataset[:, :4]
-        x = torch.stack([x for _ in range(25)], dim=1)
-        qc = self.dataset[:, 4: self.n].reshape(-1, 25, 15)
-        x = torch.cat((x, qc), dim=2)
-        y = self.dataset[:, self.n:]
-        x = x[idx, :, :]
-        y = y[idx]
-        return x, y
 
 # Defining a constructor for building recurrent models. We combine 3 recurrent model types RNN, GRU, and LSTM in this constructor.
 class recurrent_model(nn.Module):
@@ -988,10 +1007,8 @@ class SmarterAttentionNet(nn.Module):
 
         activation_dict = {'Sigmoid':nn.Sigmoid(), 'Tanh':nn.Tanh(), 'ReLU':nn.ReLU(), 'atan':atan(), 'LeakyReLU':nn.LeakyReLU()}
         
-        self.backbone = backboneNetwork(self.T, self.input_dim, self.num_neurons, self.activation) #returns (B, T, neurons)
-        
+        self.backbone = backboneNetwork(self.T, self.input_dim, self.num_neurons, self.activation) #returns (B, T, neurons)       
         self.score_net = AdditiveAttentionScore(2*self.num_neurons, self.att_active) if (score_net is None) else score_net
-
         self.apply_attn = ApplyAttention()
         
         self.prediction_net = nn.Sequential(          #(B, H), 
@@ -1000,13 +1017,10 @@ class SmarterAttentionNet(nn.Module):
             activation_dict[self.activation],
             nn.BatchNorm1d(2*self.num_neurons),
             nn.Linear(2*self.num_neurons, output_dim),  #(B, H)
-            )
-        
+            )        
     
     def forward(self, x):
-
         x = torch.transpose(x, 1, 2)
-
         mask = getMaskByFill(x)
 
         h = self.backbone(x) #(B, T, D) -> (B, T, H)
@@ -1017,74 +1031,15 @@ class SmarterAttentionNet(nn.Module):
         y = self.prediction_net(final_context)
         return y
 ########################################################################
-# Viewing the predictions for for a sample of test data:
-def graph_results_add_sig(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_pred_vs_truth'):
-  sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
-  y_true = np.array(rnn_test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = attnT_add_sig_model(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(400.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  plt.savefig(f2+n1+str(device_num)+'.png')
-  plt.show()
-  return
-
-########################################################################
-def graph_results_add_sig_R(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sigR_pred_vs_truth'):
-  sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
-  y_true = np.array(rnn_test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = attnT_add_sig_model(sample_test_data).cpu().numpy()
-    y_pred_r = attnT_add_sig_model_R(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(400.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df['y_pred_r'] = pd.Series(y_pred_r[0])
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred', 'y_pred_r'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')    
-  plt.show()
-  return
-
-########################################################################
-def graph_results_add_relu(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_relu_pred_vs_truth'):
-
-  sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
-  y_true = np.array(rnn_test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = attnT_add_relu_model(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(400.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')        
-  plt.show()
-  return
-
-########################################################################
 # Defining a constructor class which creates the correct tensor for the RNN type models. One can adjust (by choosing n) how to break the 
 # data into feature and target subsets.
 class RNN_Dataset(Dataset):
-
-    def __init__(self, dataset, n=379):
+    # ngap determines the gap between training and test
+    # datasets in terms for frequency (e.g f_gap = ngap*0.5 THz)
+    def __init__(self, dataset, n=379, ngap=40):
         self.dataset = dataset
         self.n = n
+        self.ngap = ngap
 
     def __len__(self):
         return self.dataset.shape[0]
@@ -1094,67 +1049,10 @@ class RNN_Dataset(Dataset):
         x = torch.stack([x for _ in range(25)], dim=1)
         qc = self.dataset[:, 4: self.n].reshape(-1, 25, 15)
         x = torch.cat((x, qc), dim=2)
-        y = self.dataset[:, self.n+40:]       # Creating a frequency gap of 20 THz between feature and target
+        y = self.dataset[:, self.n+self.ngap:]       # Creating a frequency gap of 20 THz between feature and target
         x = x[idx, :, :]
         y = y[idx]
         return x, y
-########################################################################
-def graph_results_add_sig_apart(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_apart_pred_vs_truth'):
-  sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
-  y_true = np.array(rnn_test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = attnT_add_sig_model(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(420.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')            
-  plt.show()
-  return
-########################################################################
-def graph_results_add_relu_apart(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='add_sig_apart_pred_vs_truth'):
-
-  sample_test_data = torch.tensor(np.array([np.array(rnn_test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
-  y_true = np.array(rnn_test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = attnT_add_relu_model(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(420.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')                
-  plt.show()
-  return
-
-########################################################################
-# Viewing the predictions for for a sample of test data:
-def graph_linear_regression(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='linear_regression_pred_vs_truth'):
-
-  sample_test_data = torch.tensor(np.array([np.array(test_data[device_num][0])]), dtype=torch.float32, device=device) 
-  y_true = np.array(test_data[device_num][1])
-
-  with torch.no_grad():
-    y_pred = linear_model(sample_test_data).cpu().numpy()
-
-  df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(400.5, 500.5, 0.5))
-  df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_pred[0])
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')                    
-  plt.show()
-  return
 ########################################################################
 class RegressionDataset(Dataset):
     def __init__(self, dataset, reg_degree=1):
@@ -1169,18 +1067,34 @@ class RegressionDataset(Dataset):
         x = torch.tensor(monomials(x, self.reg_degree))
         return x, y
 ########################################################################    
-# Viewing the predictions for for a sample of test data:
-def graph_rf_regressor(device_num,f1='./csv_files_for_paper/',f2='./csv_files_for_paper/',n1='RF_regression_pred_vs_truth'):
+def graph_results(model, test_data,device_num,freqs):
 
-  y_true = y_test[device_num]
-  y_hat = y_pred[device_num]
+  sample_test_data = torch.tensor(np.array([np.array(test_data[device_num][0])]), dtype=torch.float32, device=device) 
+  sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
+  y_true = np.array(test_data[device_num][1])
+
+  with torch.no_grad():
+    y_pred = model(sample_test_data).cpu().numpy()
 
   df = pd.DataFrame()
-  df['Fr'] = pd.Series(np.arange(400.5, 500.5, 0.5))
+  df['Fr'] = pd.Series(freqs)
   df['y_true'] = pd.Series(y_true)
-  df['y_pred'] = pd.Series(y_hat)
-  df.to_csv(f1+n1+str(device_num)+'.csv',index=False)
-  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(10,6), title='Prediction vs Ground Truth for Device %d' %(device_num))
-  plt.savefig(f2+n1+str(device_num)+'.png')                        
+  df['y_pred'] = pd.Series(y_pred[0])
+  df.plot(kind='line', x='Fr', y=['y_true', 'y_pred'], figsize=(8,4), title='Prediction vs Ground Truth for Device %d' %(device_num))
   plt.show()
   return
+########################################################################
+def return_true_pred(model, test_data,n_test,freqs):
+    df_true = pd.DataFrame()
+    df_true['Fr'] = pd.Series(freqs)
+    df_pred = pd.DataFrame()
+    df_pred['Fr'] = pd.Series(freqs)
+    for device_num in range(n_test):
+        sample_test_data = torch.tensor(np.array([np.array(test_data[device_num][0])]), dtype=torch.float32, device=device) 
+        sample_test_dataT = torch.transpose(sample_test_data, 1, 2).to(device)
+        y_true = np.array(test_data[device_num][1])
+        with torch.no_grad():
+            y_pred = model(sample_test_data).cpu().numpy()
+        df_true[device_num] = pd.Series(y_true)
+        df_pred[device_num] = pd.Series(y_pred[0])
+    return df_true, df_pred
