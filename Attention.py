@@ -833,7 +833,7 @@ class recurrent_model(nn.Module):
     
   def forward(self, x):
     
-    x = torch.transpose(x, 1, 2)
+    # x = torch.transpose(x, 1, 2)
     for layer in self.layers:
       x = layer(x)
     y = x
